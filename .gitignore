@@ -1,0 +1,31 @@
+__pycache__/
+*.pyc
+tempCodeRunnerFile.py
+.DS_Store
+images/batch/colorized_output/
+venv/
+.venv/
+logs/
+history/
+.env
+
+# Model weight files are too large for a normal git push (GitHub's 100MB
+# per-file limit). prototxt/pts_in_hull.npy stay tracked (small, no download
+# script for them); fetch weights with scripts/download_models.py.
+Model/*.caffemodel
+*.db
+streamlit_test.log
+streamlit_smoke.log
+colorized_output/
+.pytest_cache/
+
+# Evaluation datasets/results are user-generated and can be large; only the
+# folder structure and docs in evaluation/ are tracked.
+evaluation/datasets/*
+!evaluation/datasets/.gitkeep
+evaluation/results/*
+!evaluation/results/.gitkeep
+evaluation/plots/*
+!evaluation/plots/.gitkeep
+evaluation/examples/*
+!evaluation/examples/.gitkeep
