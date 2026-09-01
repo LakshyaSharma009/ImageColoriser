@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from colorizer import models as core_models
 
@@ -25,11 +26,26 @@ class ModelsTests(unittest.TestCase):
             core_models.load_model("not-a-real-model")
 
     def test_available_models_only_returns_specs_with_weights_on_disk(self):
-        available = core_models.available_models()
-        for spec in available:
-            self.assertTrue(spec.weights_path.exists())
-        available_ids = {spec.id for spec in available}
-        self.assertIn("vibrant", available_ids)
+        # Uses fake specs/weights rather than the real Model/ directory, so this
+        # passes the same way whether or not the actual (123MB, not committed
+        # to git) caffemodel happens to be present on the machine running it.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            model_dir = Path(temp_dir)
+            present = core_models.ModelSpec(
+                id="present", label="Present", description="", weights_filename="present.caffemodel"
+            )
+            missing = core_models.ModelSpec(
+                id="missing", label="Missing", description="", weights_filename="missing.caffemodel"
+            )
+            (model_dir / present.weights_filename).write_bytes(b"fake weights")
+
+            with patch.object(core_models, "MODEL_DIR", model_dir), \
+                 patch.object(core_models, "MODEL_REGISTRY", {"present": present, "missing": missing}):
+                available = core_models.available_models()
+
+                for spec in available:
+                    self.assertTrue(spec.weights_path.exists())
+                self.assertEqual({spec.id for spec in available}, {"present"})
 
 
 if __name__ == "__main__":
