@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.github/
+.claude/
+history/
+logs/
+evaluation/results/
+evaluation/plots/
+evaluation/examples/
+images/batch/colorized_output/
+streamlit_test.log
+streamlit_smoke.log
+*.db
+.pytest_cache/

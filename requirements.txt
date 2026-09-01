@@ -1,0 +1,21 @@
+# Core: colorization pipeline + UIs
+opencv-python<5
+numpy
+Pillow
+streamlit
+
+# Evaluation: PSNR/SSIM
+scikit-image
+
+# REST API
+fastapi
+uvicorn
+python-multipart
+
+# Test-only: FastAPI's TestClient requires httpx
+httpx
+
+# Optional, NOT installed by default: LPIPS perceptual metric.
+# Requires `lpips` and its dependency `torch`. Evaluation works fully without
+# it (PSNR/SSIM only); install manually if you want the LPIPS column too:
+#   pip install lpips torch --index-url https://download.pytorch.org/whl/cpu

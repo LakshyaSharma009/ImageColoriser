@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check
+        run: python -m py_compile main.py streamlit_app.py colorizer/*.py api/*.py scripts/*.py
+
+      - name: Import checks
+        # Checks that the modules import and the CLIs parse args correctly.
+        # Independent of whether model weights happen to be present.
+        run: |
+          python -c "import colorizer; import api.main"
+          python scripts/evaluate.py --help
+          python scripts/benchmark.py --help
+
+      - name: Unit + integration tests
+        # All tests mock model inference; none require a GPU, the internet, or the
+        # 123MB caffemodel weights.
+        run: python -m unittest discover -s tests
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (build check only, not pushed anywhere)
+        run: docker build -t imagecoloriser:ci .

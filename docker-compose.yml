@@ -1,0 +1,35 @@
+# Optional: `docker compose up` runs the Streamlit UI (and, with `--profile api`,
+# the FastAPI service too). Neither this project nor its normal development
+# workflow (`python main.py` / `streamlit run streamlit_app.py`) requires Docker.
+services:
+  colorizer:
+    build: .
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    volumes:
+      - ./Model:/app/Model:ro
+      - ./history:/app/history
+      - ./logs:/app/logs
+      - ./evaluation:/app/evaluation
+    environment:
+      - IMAGECOLORIZER_MODEL_DIR=/app/Model
+      - IMAGECOLORIZER_HISTORY_DIR=/app/history
+      - IMAGECOLORIZER_LOG_DIR=/app/logs
+      - IMAGECOLORIZER_EVALUATION_DIR=/app/evaluation
+
+  api:
+    build: .
+    profiles: ["api"]
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./Model:/app/Model:ro
+      - ./history:/app/history
+      - ./logs:/app/logs
+      - ./evaluation:/app/evaluation
+    environment:
+      - IMAGECOLORIZER_MODEL_DIR=/app/Model
+      - IMAGECOLORIZER_HISTORY_DIR=/app/history
+      - IMAGECOLORIZER_LOG_DIR=/app/logs
+      - IMAGECOLORIZER_EVALUATION_DIR=/app/evaluation
