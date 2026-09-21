@@ -1,402 +1,105 @@
 # AI Image Colorizer — Project Report
 
-**Generated:** 2026-09-01
-**Last updated:** 2026-09-01 (refreshed after adding evaluation, benchmarking, REST API, experiment tracking, and Docker)
-**Repository:** ImageColoriser (git, branch `main`, 1 commit: `21b5682 Initial commit`)
+**Author:** Lakshya Sharma
+**Repository:** [LakshyaSharma009/ImageColoriser](https://github.com/LakshyaSharma009/ImageColoriser)
+**Date:** September 2026
+**Status:** Working system. 54/54 unit tests passing (verified September 2026, ~4.7 s).
 
-## 1. Summary
+> This is the formal project report. For setup/usage see `README.md`; for interview preparation see `INTERVIEW_PREP.md`; for the evaluation workspace contract see `evaluation/README.md`.
 
-AI Image Colorizer adds color to grayscale photographs using a pretrained deep
-convolutional model (Zhang, Isola & Efros, *Colorful Image Colorization*, ECCV
-2016), run through OpenCV's DNN module on a Caffe checkpoint. It ships three
-interfaces — a Tkinter desktop app, a Streamlit web app, and a FastAPI REST
-service — built on a single shared core library (`colorizer/`), plus a
-PSNR/SSIM(/LPIPS) evaluation pipeline, CPU/GPU latency benchmarking,
-SQLite-backed run + experiment history, a 54-test unittest suite, CI, and
-optional Docker support.
+---
 
-## 2. Demo Walkthrough (Step-by-Step)
+## 1. Abstract
 
-A script for showing this project to someone else, end to end. Run everything
-from the repository root. Commands are PowerShell (this project's primary
-shell); a Bash equivalent is noted where it differs.
+This project delivers an end-to-end grayscale-to-color image colorization system built on the pretrained convolutional model of Zhang, Isola & Efros (*Colorful Image Colorization*, ECCV 2016), executed through OpenCV's DNN module on a Caffe checkpoint. A single shared Python library (`colorizer/`) implements model management, the LAB-space inference pipeline, input validation, quantitative evaluation, latency benchmarking, experiment history, and logging. Three user-facing interfaces — a Tkinter desktop application, a Streamlit web studio, and a FastAPI REST service — are thin layers over that core, alongside three command-line tools. The system supports two model weight variants, single and batch colorization, saturation control, PSNR/SSIM/LPIPS evaluation, SQLite-backed run and experiment tracking, Docker packaging, and continuous integration. All 54 unit tests pass without requiring a GPU, network access, or model weights.
 
-### 2.0 Prerequisites (one-time)
+## 2. Objectives
 
-- Python 3.11+ and the `Model/` folder populated with `colorization_deploy_v2.prototxt`,
-  `colorization_release_v2.caffemodel`, and `pts_in_hull.npy` (already present in this repo).
-- Dependencies installed into the project's virtual environment:
+1. Colorize grayscale photographs into plausible, vivid color with a pretrained deep model, without training infrastructure.
+2. Serve the capability through desktop, web, and API interfaces without duplicating business logic.
+3. Make results measurable: quantitative quality metrics, latency benchmarks, and persistent experiment records.
+4. Harden the system for untrusted input (size, format, decode, and dimension validation) with correct HTTP semantics.
+5. Keep the project reproducible and portable: pinned dependencies, environment-based configuration, Docker, and CI.
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-& .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+## 3. Background
 
-### 2.1 Prove it works: run the test suite
+Automatic colorization is ill-posed: many plausible colorings exist for a single grayscale input. Early approaches relied on user scribbles or reference images. Zhang et al. reframed colorization as a classification problem over 313 quantized `ab` bins in CIE LAB space rather than direct regression, preserving the multimodal nature of color (an apple may be red or green) instead of averaging to desaturated brown. Class rebalancing during training emphasizes rare, vivid colors. This project reuses that work's released Caffe artifacts (`colorization_deploy_v2.prototxt`, `colorization_release_v2*.caffemodel`, `pts_in_hull.npy`) and runs them with `cv2.dnn`, avoiding any PyTorch/TensorFlow dependency at inference time.
 
-Fast, no model weights or GPU required — good opener to show the project is tested.
-
-```powershell
-python -m unittest discover -s tests
-```
-
-Expect: `Ran 54 tests in ~2s — OK`.
-
-### 2.2 Desktop app (Tkinter)
-
-```powershell
-python main.py
-```
-
-What to show: the model loads in the background (status label, controls
-disabled until ready) → **Open Image** → **Colorize** → side-by-side
-original/colorized preview → **Save Result**. Then **Batch Colorize Folder**
-against `images\batch\` to show folder-level processing with a progress
-status and a summary dialog (succeeded/failed counts).
-
-### 2.3 Web app (Streamlit)
-
-```powershell
-streamlit run streamlit_app.py
-```
-
-Opens at `http://localhost:8501`. Walk through the three tabs:
-
-1. **Single image studio** — upload an image (e.g. from `images\batch\`),
-   click **Colorize image**, show the result and the **Download PNG**
-   button, then drag the before/after comparison slider.
-2. **Batch workspace** — upload several images at once, click **Colorize
-   all**, show the progress bar, the **Download ZIP** button, the expandable
-   before/after previews, and the processing-time summary (mean/median/P95,
-   fastest/slowest file).
-3. **Evaluation** — this is the ML-evaluation half of the demo (see §2.5 to
-   seed a dataset first if you haven't). Pick a dataset and model(s), click
-   **Run evaluation**, and show: the PSNR/SSIM/LPIPS/latency results table,
-   the per-image metric distribution charts, the original/grayscale/
-   prediction/difference example previews, and the experiment history table
-   at the bottom (this is the SQLite-backed record of every past run).
-
-### 2.4 REST API (FastAPI)
-
-```powershell
-uvicorn api.main:app --reload
-```
-
-Open `http://localhost:8000/docs` — FastAPI's interactive Swagger UI (opening
-the bare `http://localhost:8000/` also redirects here, so there's no bare
-404 to explain mid-demo). This is the easiest way to demo the API live:
-expand `/colorize`, click **Try it out**, upload a file, and execute it
-directly in the browser. No curl needed.
-
-To demo from the command line instead (Windows: use `curl.exe` explicitly, not
-the `curl` alias for `Invoke-WebRequest`):
-
-```powershell
-curl.exe http://localhost:8000/health
-curl.exe http://localhost:8000/models
-curl.exe -X POST http://localhost:8000/colorize -F "file=@images/batch/lion.jpg" -F "model=vibrant" -F "saturation=1.2" -o colorized.png
-curl.exe http://localhost:8000/history
-curl.exe http://localhost:8000/experiments
-```
-
-Talking points: `/colorize` returns `X-Model` and `X-Processing-Time`
-response headers; invalid/oversized/unsupported uploads return `400`/`413`;
-an unknown or unavailable model returns `404`; every check reuses
-`colorizer/validation.py`, the same validation the Streamlit UI uses — no
-duplicated logic between the two front ends.
-
-### 2.5 Evaluation CLI
-
-The dataset directory isn't committed to the repo (by design — see
-`evaluation/README.md`), so seed one from the sample images already in the
-repo for a quick demo:
-
-```powershell
-New-Item -ItemType Directory -Force evaluation\datasets\demo | Out-Null
-Copy-Item images\batch\lion.jpg, images\batch\valley.jpg evaluation\datasets\demo\
-```
-
-Then run:
-
-```powershell
-python scripts/evaluate.py --dataset evaluation/datasets/demo --model vibrant
-```
-
-What to show: the console summary (PSNR/SSIM mean+median, LPIPS reported as
-"unavailable" since it's an optional dependency, latency mean/median/P95),
-the generated `evaluation/results/vibrant.csv` and `.json`, and that the run
-now also shows up in the Streamlit Evaluation tab's experiment history (and
-via `curl.exe http://localhost:8000/experiments`) — one SQLite table backing
-all three surfaces.
-
-### 2.6 Benchmark CLI
-
-```powershell
-python scripts/benchmark.py --model vibrant --images evaluation/datasets/demo --iterations 3
-```
-
-What to show: **model load time** reported separately from **inference
-latency**; mean/median/P95 latency; images/sec throughput; and the `Device:`
-line (CPU here, since no CUDA-capable OpenCV build is in use — the code path
-exists but was never something we had to install or configure).
-
-### 2.7 Docker (optional — skip if Docker isn't installed)
-
-```powershell
-docker compose up
-```
-
-Then open `http://localhost:8501` (same Streamlit app, now containerized).
-For the API too: `docker compose --profile api up api` → `http://localhost:8000/docs`.
-Talking point: Docker is entirely optional — everything above already worked
-without it.
-
-### 2.8 Feature checklist (what you just demoed)
-
-- CNN colorization via OpenCV DNN, LAB color space, two selectable models
-- Desktop (Tkinter) and web (Streamlit) UIs sharing one core library
-- Single-image and batch processing, with ZIP export and a before/after slider
-- Quantitative evaluation (PSNR/SSIM, optional LPIPS) against a real dataset
-- CPU/GPU latency + throughput benchmarking with proper warm-up
-- SQLite-backed run history *and* experiment tracking, visible from the UI, the API, and the CLI
-- A REST API with interactive docs, input validation, and proper HTTP error codes
-- 54 passing tests, CI on every push, optional Docker packaging
-
-## 3. Architecture
+## 4. System overview
 
 ```text
-Image -> Normalize -> LAB -> Extract L channel -> CNN -> Predict AB channels
-      -> Merge with original L -> Convert LAB to BGR -> Output image
+BGR -> LAB -> L (224x224, mean-centered) -> CNN predicts ab distribution
+  -> ab resized to full resolution (x saturation) -> original L + predicted ab
+  -> LAB2BGR -> PNG
 
-Evaluation: color image -> grayscale -> colorize -> compare vs. original
-                                                       (PSNR / SSIM / LPIPS)
+Evaluation: color -> grayscale -> colorize -> compare vs. original (PSNR/SSIM/LPIPS)
 ```
 
-```text
-ImageColoriser/
-├── colorizer/                Shared core library (importable package)
-│   ├── __init__.py           Public API surface
-│   ├── config.py             Paths & tunables, override-able via env vars
-│   ├── models.py             Model registry, loading, GPU detection, caching
-│   ├── pipeline.py           colorize_image(): the LAB colorization pipeline
-│   ├── validation.py         Shared validation for untrusted image uploads
-│   ├── evaluation.py         PSNR/SSIM/LPIPS evaluation against a dataset
-│   ├── benchmarking.py       Latency/throughput benchmarking
-│   ├── history.py            SQLite-backed run + experiment history
-│   └── logging_setup.py      Idempotent rotating file + console logging
-├── api/                      FastAPI REST service (main.py, schemas.py)
-├── evaluation/                Evaluation workspace (datasets/results/plots/examples; nothing but docs committed)
-├── main.py                    Tkinter desktop GUI
-├── streamlit_app.py           Streamlit web UI (single, batch, evaluation tabs)
-├── scripts/                   download_models.py, evaluate.py, benchmark.py CLIs
-├── tests/                     54-test unittest suite
-├── Dockerfile, docker-compose.yml, .dockerignore   Optional containerization
-├── .github/workflows/tests.yml  CI: syntax check, import check, tests, Docker build check
-├── Model/                     Pretrained weights (prototxt, caffemodel, cluster points)
-├── history/, logs/, images/   Runtime output directories
-└── requirements.txt
-```
-
-Both UIs and the API import from `colorizer` rather than duplicating logic —
-this replaced an earlier single-file `colorizer_core.py` (now removed from
-the working tree in favor of the `colorizer/` package).
-
-## 4. Core library (`colorizer/`)
-
-- **`models.py`** — Declares a `MODEL_REGISTRY` of two `ModelSpec`s: `vibrant`
-  (required, class-rebalanced, more saturated) and `natural` (optional, muted,
-  fetched separately). `available_models()` filters to specs whose weight file
-  actually exists on disk, so a UI never offers a broken option. `load_model()`
-  is `lru_cache`d per model id, wires the cluster-center layers Zhang et al.'s
-  model needs, and transparently switches to CUDA when OpenCV was built with
-  CUDA support and a GPU is present. `device_name()` reports `"CUDA"`/`"CPU"`
-  for the evaluation, benchmarking, and API/health surfaces.
-- **`pipeline.py`** — `colorize_image()` validates the input is a 3-channel BGR
-  image, converts to LAB, resizes the L channel to 224×224 for the network,
-  runs inference, resizes the predicted AB channels back to the original
-  resolution, optionally scales them for a `saturation` control, and remerges
-  with the original-resolution L channel before converting back to BGR. Model
-  inference is serialized per-model with a lock, since `cv2.dnn.Net` isn't
-  documented as thread-safe and Streamlit can invoke it concurrently across
-  sessions sharing the cached net.
-- **`validation.py`** — Single shared validation path (extension/size/decode/
-  pixel-count checks) for untrusted uploads, used by both the Streamlit UI and
-  the REST API so the checks are never duplicated or allowed to drift apart.
-- **`evaluation.py`** — Grayscales a ground-truth color image, colorizes it,
-  and scores the prediction with PSNR/SSIM (via `scikit-image`) and optional
-  LPIPS (only if the `lpips`/`torch` packages happen to be installed — neither
-  is a required dependency). `evaluate_dataset()` discovers images
-  recursively, aggregates mean/median metrics and mean/median/P95 latency,
-  and writes CSV + JSON.
-- **`benchmarking.py`** — Times model load separately from inference,
-  optionally warms up the model with one pass, then measures
-  mean/median/P95 latency and images/sec throughput over a fixed image set —
-  no background threads, no continuous polling, runs only when invoked.
-- **`history.py`** — SQLite-backed record of past runs (filename, model,
-  saturation, dimensions, elapsed time, output PNG path) *and* experiments
-  (dataset evaluations/benchmarks: PSNR/SSIM/LPIPS, latency percentiles,
-  device, git commit). Opens a short-lived connection per call rather than
-  caching one at module scope, because Streamlit reruns scripts on a fresh
-  thread per interaction and sqlite3 connections are thread-affine. The
-  `experiments` table is added via `CREATE TABLE IF NOT EXISTS`, so an older
-  database that only has `runs` keeps working with no migration step.
-- **`config.py`** — Central paths and limits (`MODEL_DIR`, `MAX_IMAGE_PIXELS`,
-  `MAX_UPLOAD_BYTES`, history/log/evaluation locations), each override-able
-  via `IMAGECOLORIZER_*` environment variables.
-- **`logging_setup.py`** — Idempotent setup of a rotating file handler
-  (1 MB × 3 backups) plus console output; safe to call repeatedly across
-  Streamlit reruns without duplicating handlers.
-
-## 5. Desktop app (`main.py`)
-
-Tkinter GUI with Open/Colorize/Save and a batch-folder mode.
-
-- Loads the model on a background thread at startup so the UI isn't blocked;
-  controls stay disabled with a "Loading model..." status until it's ready,
-  and a friendly error dialog appears if the model files are missing.
-- Single-image workflow: open → preview → colorize → save as PNG/JPEG.
-- Batch workflow runs in its own background thread, writes to a
-  `colorized_output` subfolder, tracks per-file success/failure, and reports a
-  summary dialog with counts and any failed filenames.
-- Rejects images over `MAX_IMAGE_PIXELS` before processing.
-
-## 6. Web app (`streamlit_app.py`)
-
-Streamlit UI with custom CSS theming and three workspaces.
-
-- **Model & saturation controls** — model selector populated from
-  `available_models()`, saturation slider (0.0–2.0) passed through to
-  `colorize_image`.
-- **Single image studio** — upload, validate, preview, colorize, download PNG,
-  and a custom before/after comparison slider implemented as an inline HTML
-  component (drag-to-reveal, rendered in its own sandboxed iframe since
-  `components.html` can't see the page's outer stylesheet).
-- **Batch workspace** — multi-file upload, per-file progress bar and status
-  text, ZIP export of all successful results, per-file failure list, expandable
-  before/after previews, and a processing summary (count, average/total time,
-  fastest/slowest file).
-- **Evaluation** — pick a local dataset and one or more models, run PSNR/SSIM
-  (+LPIPS if available) evaluation on demand, view a results table, per-image
-  metric distributions, original/grayscale/prediction/difference previews for
-  a few sample images, and the experiment history table. Nothing here runs
-  automatically — only on button click.
-- Validation layer (shared with the API via `colorizer/validation.py`) rejects
-  empty uploads, unsupported extensions, undecodable images, and oversized
-  images, with per-file error messages rather than aborting the whole batch.
-
-## 7. REST API (`api/`)
-
-Thin FastAPI layer over `colorizer` — no separate validation or model-loading
-logic.
-
-| Method | Path | Description |
+| Component | Path | Role |
 |---|---|---|
-| GET | `/health` | Status, available model ids, device (CPU/CUDA) |
-| GET | `/models` | Full model registry with per-model availability |
-| POST | `/colorize` | Upload (`file`, `model`, `saturation`) → PNG, with `X-Model`/`X-Processing-Time` headers |
-| GET | `/history` | Recent colorization runs (never exposes server filesystem paths) |
-| GET | `/experiments` | Recent evaluation/benchmark experiments |
+| Shared core | `colorizer/` | Config, models, pipeline, validation, evaluation, benchmarking, history, logging |
+| Desktop UI | `main.py` | Tkinter: open / colorize / save + batch folder mode |
+| Web studio | `streamlit_app.py` | Single studio, batch workspace (ZIP), evaluation tab, before/after slider |
+| REST API | `api/main.py`, `api/schemas.py` | `GET /health`, `GET /models`, `POST /colorize`, `GET /history`, `GET /experiments` |
+| CLIs | `scripts/download_models.py`, `scripts/evaluate.py`, `scripts/benchmark.py` | Weight provisioning, dataset evaluation, latency benchmarking |
+| Packaging | `Dockerfile`, `docker-compose.yml`, `.github/workflows/tests.yml` | Optional containers + CI |
 
-Status codes: `400` invalid image/request, `413` upload too large, `404`
-unknown/unavailable model, `500` unexpected failure (full exception logged
-server-side, generic message returned to the client — no stack traces leak
-out).
+## 5. Methodology and implementation
 
-## 8. Tests & CI
+### 5.1 Colorization pipeline (`colorizer/pipeline.py`, `colorizer/models.py`)
 
-54 unit tests across six files, all passing as of this report:
+`colorize_image(img, model_id, saturation)` requires a 3-channel BGR `uint8` image, then: normalizes to `[0,1]`, converts to LAB, resizes to `224x224`, extracts and mean-centers `L` (−50), builds a DNN blob, runs `net.forward()`, reshapes/upsamples the predicted `ab` to the original resolution, applies the scalar `saturation` multiplier (`0.0` = grayscale, `1.0` = default, `2.0` = oversaturated), recombines with the original full-resolution `L`, converts back to BGR, clips, and returns `uint8`.
 
-| File | Focus |
-|---|---|
-| `tests/test_pipeline.py` | Input validation, output shape/dtype, model-id pass-through, saturation — model inference mocked out |
-| `tests/test_models.py` | `_require_file`, unknown model id rejection, `available_models()` disk-existence filtering |
-| `tests/test_history.py` | Runs + experiments: record/list/get/clear round-trips, ordering, pruning, old-DB backward compatibility |
-| `tests/test_evaluation.py` | PSNR/SSIM correctness, dataset discovery, per-image + aggregate evaluation, CSV/JSON output — model inference mocked |
-| `tests/test_benchmarking.py` | Percentile math, model-load-time timing, warm-up behavior, latency aggregation — model inference mocked |
-| `tests/test_api.py` | `/health`, `/models`, `/colorize` validation (bad extension/oversized/undecodable/unknown model) and success path, `/history`, `/experiments` — via FastAPI's `TestClient` |
+`MODEL_REGISTRY` defines `vibrant` (class-rebalanced, required) and `natural` (muted, optional). `load_model()` is `lru_cache`d per id, injects the 313 `pts_in_hull` cluster centers into the `class8_ab` layer with the `2.606` rebalancing prior on `conv8_313_rh`, and opportunistically selects the CUDA DNN backend when OpenCV reports a CUDA device — CPU otherwise, with no mandatory GPU stack. `available_models()` filters by weights present on disk so no UI can offer a missing model. Inference is serialized per model with a dedicated lock because `cv2.dnn.Net.setInput/forward` is not documented as thread-safe and Streamlit/API sessions share the cached net.
 
-```
-python -m unittest discover -s tests
-Ran 54 tests in ~2s — OK
-```
+### 5.2 Input validation (`colorizer/validation.py`)
 
-`.github/workflows/tests.yml` runs, on every push/PR to `main`: a syntax
-check (`py_compile`), import checks (`colorizer`, `api.main`, both CLIs'
-`--help`), the full test suite, and a Docker build check — all without a
-GPU, the internet, or the 123MB model weights.
+One shared path for all entry points: filename extension check (`.jpg` `.jpeg` `.png` `.bmp`), non-empty bytes, 20 MB byte cap *before* decoding (denial-of-service guard), `cv2.imdecode`, then decodability, 3-channel, and 25 MP dimension checks *after* decoding (decompression-bomb guard). `PayloadTooLargeError` subclasses `ValidationError` so the API maps oversize to `413` and other bad input to `400`.
 
-## 9. Dependencies
+### 5.3 Interfaces
 
-```
-opencv-python<5   # pinned below 5.x: the Caffe importer (readNetFromCaffe) this project relies on requires it
-numpy
-Pillow
-streamlit
-scikit-image      # PSNR/SSIM
-fastapi
-uvicorn
-python-multipart  # required by FastAPI for file uploads
-httpx             # test-only, for FastAPI's TestClient
-```
+**Tkinter (`main.py`).** Model loads on a daemon thread at startup; controls disable until ready. Single mode previews via `cv2_to_tk` (fit-to-450, reference retained); batch mode walks a chosen folder on a worker thread into `colorized_output/*_colorized.png` with `root.after()` status updates and a success/failure summary dialog.
 
-LPIPS (`lpips` + `torch`) is intentionally **not** in `requirements.txt` — it's
-an optional perceptual metric; evaluation works fully without it.
+**Streamlit (`streamlit_app.py`).** Model picker from `available_models()` plus a global saturation slider; single studio (upload → preview → colorize → PNG download), batch workspace (multi-upload, progress bar, in-memory `ZIP_DEFLATED` export, expandable previews, mean/total/fastest/slowest summary), and an evaluation tab (dataset + multi-model selection, on-demand runs, results table, PSNR/SSIM distribution charts, original/grayscale/prediction/difference previews, experiment history). The before/after slider is a self-contained HTML/JS component (stacked data-URI images, `clip-path` driven by a range input) because `components.html` iframes cannot see page CSS. Logging setup is idempotent across Streamlit reruns.
 
-## 10. Model assets (`Model/`)
+**FastAPI (`api/`).** Stateless thin layer: `POST /colorize` accepts multipart `file` plus `model`/`saturation` forms, reuses core validation and pipeline, times inference, returns PNG with `X-Model` and `X-Processing-Time` headers. `400` invalid image, `413` oversized, `404` unknown/unavailable model, `500` unexpected failure (traceback logged server-side, generic message to client). `GET /` redirects to `/docs`; history endpoints intentionally omit server-local filesystem paths.
 
-| File | Size | Role |
-|---|---|---|
-| `colorization_deploy_v2.prototxt` | 12 KB | Network architecture definition |
-| `colorization_release_v2.caffemodel` | 123 MB | Pretrained weights (`vibrant`, required) |
-| `pts_in_hull.npy` | 8 KB | 313 quantized ab cluster centers used to seed the output layer |
+### 5.4 Evaluation (`colorizer/evaluation.py`, `scripts/evaluate.py`)
 
-The optional `natural` (non-rebalanced) weights are not present locally; they
-can be fetched with `python scripts/download_models.py natural`. Note: the
-`vibrant` weights above are already committed in this repo's git history
-(`git ls-files Model/` confirms it) — worth knowing if repo size ever becomes
-a concern, since that's 123MB sitting in every clone.
+Protocol per image: ground-truth color → synthetic grayscale (3-channel) → colorize → score prediction against the untouched original. Metrics: PSNR (dB, higher better), SSIM (−1…1, `1.0` identical) via scikit-image, and optional LPIPS (lower better, `None`/`n/a` when `lpips`/`torch` absent — never a failure). `evaluate_dataset()` discovers `.jpg`/`.jpeg`/`.png`/`.webp` recursively, warms the model once, processes one image at a time, and aggregates mean/median plus mean/median/p95 latency; results persist as per-image CSV plus aggregate JSON under `evaluation/results/` and a SQLite experiment row (model, dataset, count, saturation, device, metrics, latency, git commit). Datasets live under `evaluation/datasets/<name>/` and are gitignored by design.
 
-## 11. Current working-tree state (uncommitted, relative to the single `21b5682` commit)
+### 5.5 Benchmarking (`colorizer/benchmarking.py`, `scripts/benchmark.py`)
 
-- **Deleted:** `colorizer_core.py` — superseded by the `colorizer/` package.
-- **Modified:** `main.py`, `streamlit_app.py`, `README.md`, `.gitignore`.
-- **New, untracked:** `colorizer/`, `api/`, `evaluation/`, `tests/`, `scripts/`,
-  `requirements.txt`, `Dockerfile`, `docker-compose.yml`, `.dockerignore`,
-  `.github/workflows/tests.yml`.
+Cold model-load timing (cache cleared first) reported separately from inference; one warmup pass; then N iterations over a fixed pre-decoded image set with mean/median/p95 latency and images/sec throughput. No disk writes, no thread pools — same locked inference path as production.
 
-In short: the repo's single commit predates a substantial buildout — the
-original one-file core became the `colorizer` package plus a FastAPI service,
-an evaluation/benchmarking pipeline, and experiment tracking; both UIs were
-rebuilt or extended on top of it; and a 54-test suite, CI, and optional Docker
-packaging were added. None of this is committed yet.
+### 5.6 History and configuration (`colorizer/history.py`, `colorizer/config.py`)
 
-## 12. Notable design decisions worth knowing
+SQLite (WAL) stores `runs` (filename, model, saturation, dimensions, elapsed, output PNG path, timestamp) and `experiments` (evaluation aggregates plus git short hash, best-effort). Short-lived per-call connections avoid Streamlit cross-thread `ProgrammingError` and Windows `.db` lock leaks; `runs` auto-prunes to 200 entries including orphan PNG cleanup; tables use `CREATE TABLE IF NOT EXISTS` so no migrations are needed. All paths and limits are `IMAGECOLORIZER_*` environment-overridable for Docker.
 
-- **Shared core, three front ends** — Tkinter, Streamlit, and FastAPI all call
-  the same `colorize_image`/`load_model`/`validate_and_decode_upload`; no
-  duplicated business logic.
-- **Per-model inference lock** (`pipeline.py`) — guards against concurrent
-  Streamlit/API requests hitting a cached, non-thread-safe `cv2.dnn.Net`.
-- **Per-call SQLite connections** (`history.py`) — avoids cross-thread
-  `sqlite3.ProgrammingError` under Streamlit's per-rerun threading model, and
-  avoids leaking Windows file locks on the `.db` file.
-- **GPU is opportunistic, not required** — `models.py` upgrades to CUDA only
-  if OpenCV was built with CUDA support and a device is present; otherwise CPU
-  inference with no configuration needed. No CUDA toolkit, PyTorch, or other
-  GPU package is installed by this project.
-- **Evaluation/benchmarking are on-demand only** — never run automatically on
-  startup, tab switch, or model selection; only on explicit button click or
-  CLI invocation, per this project's lightweight-by-default philosophy.
-- **`opencv-python<5` pin** — the Caffe importer this project depends on is
-  not available in newer OpenCV builds.
+## 6. Testing and CI
 
-## 13. Suggested next steps
+54 unit tests across `tests/` (`test_api`, `test_benchmarking`, `test_evaluation`, `test_history`, `test_models`, `test_pipeline`), verified passing in September 2026 (`Ran 54 tests — OK`). All DNN inference is mocked (zero-filled `forward`), so the suite needs no GPU, network, or weights; it covers validation, shape/dtype contracts, model-id routing, saturation invariance, metric correctness, discovery, CSV/JSON output, history round-trips/ordering/pruning/backward compatibility, percentile math, warmup behavior, and API success/error paths via `TestClient`. CI (`.github/workflows/tests.yml`) runs `py_compile`, import/CLI smoke checks, the full suite, and a Docker build check on every push/PR to `main`.
 
-- Commit the current working-tree changes (the buildout described in §11) —
-  the repository history does not yet reflect the actual state of the code.
-- Decide whether to keep the 123MB `caffemodel` committed to git (see §10) or
-  move to a download-on-setup model for all weights, `vibrant` included.
-- Add screenshots to the README (placeholders currently unfilled).
-- Optionally run a real evaluation against a larger personal dataset and drop
-  the resulting numbers into the README's "Evaluation Results" table.
+## 7. Results
+
+- Functional: single and batch colorization work across all three interfaces; sample images in `images/batch/` (`lion.jpg`, `valley.jpg`, `gray.jpeg`) colorize successfully.
+- Quality: evaluation is procedure-complete and dataset-dependent by design; no fixed scores are claimed here — run `python scripts/evaluate.py --dataset evaluation/datasets/<name> --model vibrant` to produce PSNR/SSIM/LPIPS numbers for any dataset, viewable in the CLI, Streamlit tab, and `/experiments`.
+- Performance: latency is device-dependent (CPU vs CUDA auto-detect); run `python scripts/benchmark.py --images evaluation/datasets/<name> --model vibrant --iterations 3` for load time, p95 latency, and throughput on the host.
+- Reliability: oversized, corrupt, and wrong-extension uploads are rejected with per-file messages (UI) or precise status codes (API); missing weights produce actionable errors naming the expected `Model/` files.
+
+## 8. Limitations
+
+Colorization is a plausible guess, not ground-truth recovery — unusual objects may receive incorrect but natural-looking hues. CPU inference is seconds per image; GPU requires an OpenCV CUDA build. Inputs are capped at 25 MP / 20 MB. LPIPS needs the heavy optional `torch` stack. The 2016 Caffe model trails modern GAN/diffusion colorizers on faces and fine textures.
+
+## 9. Future work
+
+Perceptual-loss fine-tuning or a modern backbone (e.g. DDColor) with ONNX export; face-aware priors; async batch job queue with IDs for the API; authentication/rate limiting; hosted demo; Playwright UI tests; larger curated evaluation dataset with published score table in the README.
+
+## 10. Conclusion
+
+The project meets its objectives: one tested core library powers three interfaces plus evaluation, benchmarking, history, packaging, and CI, with clean separation between ML inference, validation, presentation, and operations. The system is demonstrable offline after one-time weight download and extensible — a new model is a single `ModelSpec` entry.
+
+## References
+
+- Zhang, Isola & Efros, “Colorful Image Colorization,” ECCV 2016; artifacts via `richzhang/colorization`.
+- OpenCV DNN Caffe inference; scikit-image PSNR/SSIM; optional `lpips`+`torch`; Streamlit; FastAPI; SQLite.
